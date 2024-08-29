@@ -50,13 +50,6 @@ struct TGAColor make_color_p(unsigned char *p, int bytes_pp) {
     return color;
 }
 
-void assign_color(struct TGAColor *image, struct TGAColor *other_image) {
-    if (image != other_image) {
-        image->bytes_pp = other_image->bytes_pp;
-        image->val = other_image->val;
-    }
-}
-
 struct TGAImage make_image_default() {
     struct TGAImage image;
 
@@ -92,17 +85,8 @@ struct TGAImage make_image_copy(struct TGAImage *other_image) {
     return image;
 }
 
-void assign_image(struct TGAImage *image, struct TGAImage *other_image) {
-    if (image != other_image) {
-
-        // really want to test this do we need a deep copy or can you just
-        // move the pointer like this?
-        image = other_image;
-    }
-}
-
 // TODO verify
-void load_rle_data(struct TGAImage *image, FILE *in) {
+bool load_rle_data(struct TGAImage *image, FILE *in) {
 	unsigned long pixel_count = image->width * image->height;
 	unsigned long current_pixel = 0;
 	unsigned long current_byte  = 0;
@@ -137,4 +121,176 @@ void load_rle_data(struct TGAImage *image, FILE *in) {
 		}
 	} while (current_pixel < pixel_count);
 	return true; 
+}
+
+bool unload_rle_data(struct TGAImage *image, FILE *out) {
+	const unsigned char max_chunk_length = 128;
+	unsigned long n = image->width * image->height;
+	unsigned long cur = 0;
+
+	while (cur < n) {
+		unsigned long chunk_start = cur * image->bytes_pp;
+		unsigned long cur_byte = cur * image->bytes_pp;
+		unsigned char run_length = 1;
+		bool raw = true;
+
+		while (cur + run_length < n && run_length < max_chunk_length) {
+			bool succ_eq = true;
+			for (int t=0; succ_eq && t < image->bytes_pp; t++) {
+				succ_eq = (image->data[cur_byte + t] == image->data[cur_byte+ t + image->bytes_pp]);
+			}
+			cur_byte += image->bytes_pp;
+			if (1 == run_length) {
+				raw = !succ_eq;
+			}
+			if (raw && succ_eq) {
+				run_length--;
+				break;
+			}
+			if (!raw && !succ_eq) {
+				break;
+			}
+			run_length++;
+		}
+		cur += run_length;
+        fputc(raw ? run_length - 1 : run_length + 127, out);
+		if (ferror(out)) {
+            printf(stderr, "Error: cannot dump tga file\n");
+			return false;
+		}
+
+        fwrite((char *)image->data + chunk_start,
+            (raw ? run_length * image->bytes_pp : image->bytes_pp),
+            sizeof((char *)image->data + chunk_start),
+            out
+        ); // hopefully this works
+
+		if (ferror(out)) {
+            printf(stderr, "Error: cannot dump tga file\n");
+			return false;
+		}
+	}
+	return true;
+}
+
+bool read_tga_file(struct TGAImage *image, char *filename) {
+	if (image->data)
+        free(image->data);
+	image->data = NULL;
+
+    FILE *in;
+    in = fopen(filename, "r");
+	if (in == NULL) {
+        fprintf(stderr, "Error: cannot open file\n");
+        fclose(in);
+		return false;
+	}
+
+	struct TGAHeader header;
+
+    fread((char *) &header, 1, sizeof(header), in);
+
+	image->width   = header.width;
+	image->height  = header.height;
+	image->bytes_pp = header.bits_per_pixel>>3;
+
+	if (image->width <= 0 || image->height <= 0 || (image->bytes_pp != GRAYSCALE
+        && image->bytes_pp!=RGB && image->bytes_pp!=RGBA)) {
+            fclose(in);
+            fprintf(stderr, "Error: bad headers\n");
+            return 1;
+	}
+
+	unsigned long n = image->bytes_pp * image->width * image->height;
+
+	image->data = (unsigned char *)malloc(n); // hopefully this works
+
+	if (3 == header.data_type_code || 2 == header.data_type_code) {
+        fread((char *)image->data, n, sizeof(image->data), in);
+	} else if (10 == header.data_type_code || 11 == header.data_type_code) {
+		if (!load_rle_data(image, in)) {
+            fclose(in);
+            fprintf(stderr, "Error: something went wrong wile reading the data\n");
+			return false;
+		}
+	} else {
+        fclose(in);
+        fprintf(stderr, "Error: unknown file format %d\n", (int)header.data_type_code);
+		return false;
+	}
+	if (!(header.image_descriptor & 0x20)) {
+		flip_vertically();
+	}
+	if (header.image_descriptor & 0x10) {
+		flip_horizontally();
+	}
+    printf("%dx%d/%d\n",
+        image->width, image->height, image->bytes_pp * 8);
+    fclose(in);
+	return true;
+}
+
+bool write_tga_file(struct TGAImage *image, char *filename, bool rle) {
+	unsigned char developer_area_ref[4] = {0, 0, 0, 0};
+	unsigned char extension_area_ref[4] = {0, 0, 0, 0};
+	unsigned char footer[18] = {'T','R','U','E','V','I','S','I','O','N','-','X','F','I','L','E','.','\0'};
+
+	FILE *out;
+    out = fopen(filename, "b");
+	if (out == NULL) {
+        fprintf(stderr, "Error: cannot open file\n");
+        fclose(out);
+		return false;
+	}
+
+    struct TGAHeader header;
+	memset((void *)&header, 0, sizeof(header));
+	header.bits_per_pixel = image->bytes_pp << 3;
+	header.width  = image->width;
+	header.height = image->height;
+	header.data_type_code = (image->bytes_pp == GRAYSCALE ? (rle ? 11 : 3) :(rle ? 10 : 2));
+	header.image_descriptor = 0x20; // top-left origin
+
+    fwrite((char *)&header, 1, sizeof(header), out); // hopefully this works
+
+	if (ferror(out)) {
+        fclose(out);
+        fprintf(stderr, "Error: cannot dump tga file\n");
+		return false;
+	}
+	if (!rle) {
+        fwrite((char *)image->data, 1, 
+            image->width * image->height * image->bytes_pp, out);
+		if (ferror(out)) {
+            fprintf(stderr, "Error: cannot unload raw data\n");
+            fclose(out);
+			return false;
+		}
+	} else {
+		if (!unload_rle_data(image, out)) {
+            fclose(out);
+            fprintf(stderr, "Error: cannot unload rle data\n");
+			return false;
+		}
+	}
+    fwrite((char *)developer_area_ref, 1, sizeof(developer_area_ref), out);
+	if (ferror(out)) {
+        fprintf(stderr, "Error: cannot dump tga file\n");
+        fclose(out);
+		return false;
+	}
+    fwrite((char *)extension_area_ref, 1, sizeof(extension_area_ref), out);
+	if (ferror(out)) {
+        fprintf(stderr, "Error: cannot dump tga file\n");
+        fclose(out);
+		return false;
+	}
+    fwrite((char *)footer, 1, sizeof(footer), out);
+	if (ferror(out)) {
+        fprintf(stderr, "Error: cannot dump tga file\n");
+        fclose(out);
+		return false;
+	}
+    fclose(out);
+	return true;
 }

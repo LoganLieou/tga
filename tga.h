@@ -49,22 +49,18 @@ struct TGAColor make_color_vals(int val, int bytes_pp);
 struct TGAColor make_color_copy(struct TGAColor *color);
 struct TGAColor make_color_p(unsigned char *p, int bytes_pp);
 
-/* Misc operations for TGAColor */
-void assign_color(struct TGAImage *image, struct TGAImage *other_image);
-
 /* Constructors for the TGAImage struct */
 struct TGAImage make_image_default();
 struct TGAImage make_image_size(int width, int height, int bytes_pp);
 struct TGAImage make_image_copy(struct TGAImage *image);
 
-
 /* RLE Loads */
-void load_rle_data(struct TGAImage *image, FILE *in);
-void unload_rle_data(struct TGAImage *image, FILE *out);
+bool load_rle_data(struct TGAImage *image, FILE *in);
+bool unload_rle_data(struct TGAImage *image, FILE *out);
 
 /* File IO */
 bool read_tga_file(struct TGAImage *image, char *filename);
-bool write_tga_file(struct TGAImage *image, char *filename);
+bool write_tga_file(struct TGAImage *image, char *filename, bool rle);
 
 /* Transform the Image */
 bool flip_h(struct TGAImage *image);
@@ -74,6 +70,5 @@ bool scale(struct TGAImage *image);
 /* Misc operations for TGAImage */
 unsigned char *buffer(struct TGAImage *image);
 void clear(struct TGAImage *image);
-void assign_image(struct TGAImage *image, struct TGAImage *other_image);
 
 #endif // TGA_H
