@@ -66,8 +66,14 @@ struct TGAImage make_image_default() {
 struct TGAImage make_image_size(int width, int height, int bytes_pp) {
     struct TGAImage image;
 
+	image.width = width;
+	image.height = height;
+	image.bytes_pp = bytes_pp;
+
     unsigned long n = width * height * bytes_pp;
-    memset(image.data, 0, n); // hope this works
+
+	image.data = (unsigned char *)malloc(n);
+    memset(image.data, 0, n);
 
     return image;
 }
@@ -155,7 +161,7 @@ bool unload_rle_data(struct TGAImage *image, FILE *out) {
 		cur += run_length;
         fputc(raw ? run_length - 1 : run_length + 127, out);
 		if (ferror(out)) {
-            printf(stderr, "Error: cannot dump tga file\n");
+            fprintf(stderr, "Error: cannot dump tga file\n");
 			return false;
 		}
 
@@ -166,7 +172,7 @@ bool unload_rle_data(struct TGAImage *image, FILE *out) {
         ); // hopefully this works
 
 		if (ferror(out)) {
-            printf(stderr, "Error: cannot dump tga file\n");
+            fprintf(stderr, "Error: cannot dump tga file\n");
 			return false;
 		}
 	}
@@ -219,10 +225,10 @@ bool read_tga_file(struct TGAImage *image, char *filename) {
 		return false;
 	}
 	if (!(header.image_descriptor & 0x20)) {
-		flip_vertically();
+		flip_v(image);
 	}
 	if (header.image_descriptor & 0x10) {
-		flip_horizontally();
+		flip_h(image);
 	}
     printf("%dx%d/%d\n",
         image->width, image->height, image->bytes_pp * 8);
@@ -235,62 +241,153 @@ bool write_tga_file(struct TGAImage *image, char *filename, bool rle) {
 	unsigned char extension_area_ref[4] = {0, 0, 0, 0};
 	unsigned char footer[18] = {'T','R','U','E','V','I','S','I','O','N','-','X','F','I','L','E','.','\0'};
 
-	FILE *out;
-    out = fopen(filename, "b");
+	FILE *out = fopen(filename, "wb");
 	if (out == NULL) {
-        fprintf(stderr, "Error: cannot open file\n");
-        fclose(out);
+		fprintf(stderr, "Error: cannot open file\n");
+		fclose(out);
 		return false;
 	}
-
-    struct TGAHeader header;
+	struct TGAHeader header;
 	memset((void *)&header, 0, sizeof(header));
 	header.bits_per_pixel = image->bytes_pp << 3;
 	header.width  = image->width;
 	header.height = image->height;
-	header.data_type_code = (image->bytes_pp == GRAYSCALE ? (rle ? 11 : 3) :(rle ? 10 : 2));
+	header.data_type_code = (image->bytes_pp == GRAYSCALE ? (rle ? 11 : 3) : (rle ? 10 : 2));
 	header.image_descriptor = 0x20; // top-left origin
-
-    fwrite((char *)&header, 1, sizeof(header), out); // hopefully this works
-
+	fwrite((char *)&header, 1, sizeof(header), out);
 	if (ferror(out)) {
-        fclose(out);
-        fprintf(stderr, "Error: cannot dump tga file\n");
+		fclose(out);
+		fprintf(stderr, "Error: cannot dump tga file\n");
 		return false;
 	}
 	if (!rle) {
-        fwrite((char *)image->data, 1, 
-            image->width * image->height * image->bytes_pp, out);
+		fwrite((char *)image->data, 1, image->width * image->height * image->bytes_pp, out);
 		if (ferror(out)) {
-            fprintf(stderr, "Error: cannot unload raw data\n");
-            fclose(out);
+			fclose(out);
+			fprintf(stderr, "Error: cannot unload raw data\n");
 			return false;
 		}
 	} else {
 		if (!unload_rle_data(image, out)) {
-            fclose(out);
-            fprintf(stderr, "Error: cannot unload rle data\n");
+			fclose(out);
+			fprintf(stderr, "Error: cannot unload rle data\n");
 			return false;
 		}
 	}
-    fwrite((char *)developer_area_ref, 1, sizeof(developer_area_ref), out);
+	fwrite((char *)developer_area_ref, 1, sizeof(developer_area_ref), out);
 	if (ferror(out)) {
-        fprintf(stderr, "Error: cannot dump tga file\n");
-        fclose(out);
+		fprintf(stderr, "Error: cannot dump tga file\n");
+		fclose(out);
 		return false;
 	}
-    fwrite((char *)extension_area_ref, 1, sizeof(extension_area_ref), out);
+	fwrite((char *)extension_area_ref, 1, sizeof(extension_area_ref), out);
 	if (ferror(out)) {
-        fprintf(stderr, "Error: cannot dump tga file\n");
-        fclose(out);
+		fprintf(stderr, "Error: cannot dump tga file\n");
+		fclose(out);
 		return false;
 	}
-    fwrite((char *)footer, 1, sizeof(footer), out);
+	fwrite((char *)footer, 1, sizeof(footer), out);
 	if (ferror(out)) {
-        fprintf(stderr, "Error: cannot dump tga file\n");
-        fclose(out);
+		fprintf(stderr, "Error: cannot dump tga file\n");
+		fclose(out);
 		return false;
 	}
-    fclose(out);
+	fclose(out);
 	return true;
+}
+
+bool scale(struct TGAImage *image, int w, int h) {
+	if (w <= 0 || h <= 0 || !image->data) 
+		return false;
+
+	int n = w * h * image->bytes_pp;
+	unsigned char *t_data = (unsigned char *)malloc(n);
+
+	int n_scan_line = 0;
+	int o_scan_line = 0;
+	int erry = 0;
+	unsigned long n_line_bytes = w * image->bytes_pp;
+	unsigned long o_line_bytes = image->width * image->bytes_pp;
+
+	for (int j = 0; j < image->height; ++j) {
+		int errx = image->width - w;
+		int nx   = -image->bytes_pp;
+		int ox   = -image->bytes_pp;
+		for (int i = 0; i < image->width; i++) {
+			ox += image->bytes_pp;
+			errx += w;
+			while (errx>=(int)image->width) {
+				errx -= image->width;
+				nx += image->bytes_pp;
+				memcpy(t_data + n_scan_line+nx, image->data+o_scan_line+ox, image->bytes_pp);
+			}
+		}
+		erry += h;
+		o_scan_line += o_line_bytes;
+		while (erry >= (int)image->height) {
+			if (erry >= (int)image->height << 1)
+				memcpy(t_data + n_scan_line + n_line_bytes, t_data + n_scan_line, n_line_bytes);
+			erry -= image->height;
+			n_scan_line += n_line_bytes;
+		}
+	}
+	free(image->data);
+	image->data = t_data;
+	image->width = w;
+	image->height = h;
+	return true;
+}
+
+bool flip_h(struct TGAImage *image) {
+	if (image->data == NULL) 
+		return false;
+
+	int half = image->width >> 1;
+	for (int i=0; i < half; i++) {
+		for (int j=0; j < image->height; j++) {
+			struct TGAColor c1 = get(image, i, j);
+			struct TGAColor c2 = get(image, image->width-1-i, j);
+			set(image, i, j, c2);
+			set(image, image->width-1-i, j, c1);
+		}
+	}
+	return true;
+}
+
+bool flip_v(struct TGAImage *image) {
+	if (image->data == NULL) 
+		return false;
+	unsigned long bytes_per_line = image->width * image->bytes_pp;
+	unsigned char *line = (unsigned char *)malloc(bytes_per_line);
+	int half = image->height >> 1;
+	for (int j = 0; j < half; ++j) {
+		unsigned long l1 = j * bytes_per_line;
+		unsigned long l2 = (image->height-1-j) * bytes_per_line;
+		memmove((void *)line, (void *)(image->data + l1), bytes_per_line);
+		memmove((void *)(image->data + l1), (void *)(image->data + l2), bytes_per_line);
+		memmove((void *)(image->data + l2), (void *)line, bytes_per_line);
+	}
+	free(line);
+	return true;
+}
+
+struct TGAColor get(struct TGAImage *image, int x, int y) {
+	struct TGAColor color;
+	if (!image->data || x < 0 || y < 0 || x >= image->width || y >= image->height)
+		return color;
+	return make_color_p(image->data + (x + y * image->width) * image->bytes_pp, image->bytes_pp);
+}
+
+void set(struct TGAImage *image, int x, int y, struct TGAColor color) {
+	if (!image->data || x < 0 || y < 0 || x >= image->width || y >= image->height)
+		return;
+	memcpy(image->data + (x + y * image->width) * image->bytes_pp, color.raw, image->bytes_pp);
+}
+
+unsigned char *buffer(struct TGAImage *image) {
+	return image->data;
+}
+
+void clear(struct TGAImage *image) {
+	memset((void *)image->data, 0, image->width * image->height * image->bytes_pp);
 }

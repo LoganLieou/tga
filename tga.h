@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
+#pragma pack(push, 1)
 struct TGAHeader {
     char id_length;
     char color_map_type;
@@ -19,6 +21,7 @@ struct TGAHeader {
     char  bits_per_pixel;
     char  image_descriptor;
 };
+#pragma pack(pop)
 
 struct TGAColor {
     union {
@@ -65,7 +68,11 @@ bool write_tga_file(struct TGAImage *image, char *filename, bool rle);
 /* Transform the Image */
 bool flip_h(struct TGAImage *image);
 bool flip_v(struct TGAImage *image);
-bool scale(struct TGAImage *image);
+bool scale(struct TGAImage *image, int h, int w);
+
+/* Assign pixel values in TGAImage */
+struct TGAColor get(struct TGAImage *image, int x, int y);
+void set(struct TGAImage *image, int x, int y, struct TGAColor color);
 
 /* Misc operations for TGAImage */
 unsigned char *buffer(struct TGAImage *image);
