@@ -2,8 +2,12 @@
 
 struct TGAColor make_color_default() {
     struct TGAColor color;
-    color.val = 0;
-    color.bytes_pp = 1;
+
+    color.bytes_pp = 4;
+
+	// TODO bgra instead so rgba values are reversed this needs to be fixed
+	for (short i = 0; i < 4; ++i)
+		color.rgba[i] = 0;
 
     return color;
 }
@@ -11,21 +15,12 @@ struct TGAColor make_color_default() {
 struct TGAColor make_color_rgb(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     struct TGAColor color;
 
-    color.r = r;
-    color.g = g;
-    color.b = b;
-    color.a = a;
-
     color.bytes_pp = 4;
 
-    return color;
-}
-
-struct TGAColor make_color_vals(int val, int bytes_pp) {
-    struct TGAColor color;
-
-    color.val = val;
-    color.bytes_pp = bytes_pp;
+	color.rgba[0] = r;
+	color.rgba[1] = g;
+	color.rgba[2] = b;
+	color.rgba[3] = a;
 
     return color;
 }
@@ -33,19 +28,9 @@ struct TGAColor make_color_vals(int val, int bytes_pp) {
 struct TGAColor make_color_copy(struct TGAColor *other_color) {
     struct TGAColor color;
 
-    color.val = other_color->val;
     color.bytes_pp = other_color->bytes_pp;
-
-    return color;
-}
-
-struct TGAColor make_color_p(unsigned char *p, int bytes_pp) {
-    struct TGAColor color;
-
-    // We know for sure that this will be <= 4 which is the allocated size of
-    // the raw array
-    for (int i = 0; i < bytes_pp; ++i)
-        color.raw[i] = p[i];
+	for (short i = 0; i < color.bytes_pp; ++i)
+		color.rgba[i] = other_color->rgba[i];
 
     return color;
 }
@@ -75,6 +60,10 @@ struct TGAImage make_image_size(int width, int height, int bytes_pp) {
 	image.data = (unsigned char *)malloc(n);
     memset(image.data, 0, n);
 
+	// make sure the background is visible this comes with using RGBA now
+	for (int i = 3; i < n; i += 4)
+		image.data[i] = 255; // setting the alpha
+
     return image;
 }
 
@@ -91,7 +80,6 @@ struct TGAImage make_image_copy(struct TGAImage *other_image) {
     return image;
 }
 
-// TODO verify
 bool load_rle_data(struct TGAImage *image, FILE *in) {
 	unsigned long pixel_count = image->width * image->height;
 	unsigned long current_pixel = 0;
@@ -103,9 +91,9 @@ bool load_rle_data(struct TGAImage *image, FILE *in) {
 		if (chunk_header<128) {
 			chunk_header++;
 			for (int i=0; i < chunk_header; ++i) {
-				fread((char *)color_buffer.raw, image->bytes_pp, sizeof(color_buffer.raw), in);
+				fread((char *)color_buffer.rgba, image->bytes_pp, sizeof(color_buffer.rgba), in);
 				for (int t = 0; t < image->bytes_pp; ++t)
-					image->data[current_byte++] = color_buffer.raw[t];
+					image->data[current_byte++] = color_buffer.rgba[t];
 				current_pixel++;
 				if (current_pixel > pixel_count) {
                     fprintf(stderr, "Error: too many pixels!\n");
@@ -114,10 +102,10 @@ bool load_rle_data(struct TGAImage *image, FILE *in) {
 			}
 		} else {
 			chunk_header -= 127;
-			fread((char *)color_buffer.raw, image->bytes_pp, sizeof(color_buffer.raw), in);
+			fread((char *)color_buffer.rgba, image->bytes_pp, sizeof(color_buffer.rgba), in);
 			for (int i = 0; i < chunk_header; i++) {
 				for (int t = 0; t < image->bytes_pp; t++)
-					image->data[current_byte++] = color_buffer.raw[t];
+					image->data[current_byte++] = color_buffer.rgba[t];
 				current_pixel++;
 				if (current_pixel > pixel_count) {
                     fprintf(stderr, "Error: too many pixels!\n");
@@ -372,16 +360,30 @@ bool flip_v(struct TGAImage *image) {
 }
 
 struct TGAColor get(struct TGAImage *image, int x, int y) {
-	struct TGAColor color;
+	struct TGAColor color = make_color_default();
 	if (!image->data || x < 0 || y < 0 || x >= image->width || y >= image->height)
 		return color;
-	return make_color_p(image->data + (x + y * image->width) * image->bytes_pp, image->bytes_pp);
+
+	// offset
+	// that chunk of data will be the pixel information
+	color.bytes_pp = image->bytes_pp;
+	unsigned char *dat = image->data + (x + y * image->width) * image->bytes_pp;
+	for (short i = 0; i < image->bytes_pp; ++i)
+		color.rgba[i] = dat[i];
+
+	// DEBUG
+	printf("pixel info %s\n", color.rgba);
+
+	return color;
 }
 
 void set(struct TGAImage *image, int x, int y, struct TGAColor color) {
-	if (!image->data || x < 0 || y < 0 || x >= image->width || y >= image->height)
+	if (!image->data || x < 0 || y < 0 || x >= image->width || y >= image->height) {
+		fprintf(stderr, "could not set values\n");
 		return;
-	memcpy(image->data + (x + y * image->width) * image->bytes_pp, color.raw, image->bytes_pp);
+	}
+
+	memcpy(image->data + (x + y * image->width) * image->bytes_pp, color.rgba, image->bytes_pp);
 }
 
 unsigned char *buffer(struct TGAImage *image) {

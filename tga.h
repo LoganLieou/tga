@@ -24,13 +24,7 @@ struct TGAHeader {
 #pragma pack(pop)
 
 struct TGAColor {
-    union {
-        struct {
-            unsigned char b, g, r, a;
-        };
-        unsigned char raw[4];
-        unsigned int val;
-    };
+    unsigned char rgba[4];
     int bytes_pp;
 };
 
@@ -39,6 +33,7 @@ struct TGAImage {
     int height, width, bytes_pp; // bytes per pixel
 };
 
+// DEPRECATED colors are always RGBA now
 enum Format {
     GRAYSCALE = 1,
     RGB = 3,
@@ -48,9 +43,7 @@ enum Format {
 /* Constructors for the TGAColor struct */
 struct TGAColor make_color_default();
 struct TGAColor make_color_rgb(unsigned char r, unsigned char g, unsigned char b, unsigned char a);
-struct TGAColor make_color_vals(int val, int bytes_pp);
 struct TGAColor make_color_copy(struct TGAColor *color);
-struct TGAColor make_color_p(unsigned char *p, int bytes_pp);
 
 /* Constructors for the TGAImage struct */
 struct TGAImage make_image_default();
