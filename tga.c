@@ -371,9 +371,6 @@ struct TGAColor get(struct TGAImage *image, int x, int y) {
 	for (short i = 0; i < image->bytes_pp; ++i)
 		color.rgba[i] = dat[i];
 
-	// DEBUG
-	printf("pixel info %s\n", color.rgba);
-
 	return color;
 }
 
